@@ -249,9 +249,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin, A: Authentication> Socks5Socket<T, A> {
         self.reply_ip = Some(addr);
     }
 
-    /// Process clients SOCKS requests
-    /// This is the entry point where a whole request is processed.
-    pub async fn upgrade_to_socks5(mut self) -> Result<Socks5Socket<T, A>> {
+    pub async fn handshake(&mut self) -> Result<()>  {
+        // TODO (ensure we don't handshake twice?)
         trace!("upgrading to socks5...");
 
         // Handshake
@@ -271,6 +270,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin, A: Authentication> Socks5Socket<T, A> {
             debug!("skipping auth");
         }
 
+        Ok(())
+    }
+
+    /// Process clients SOCKS requests
+    /// This is the entry point where a whole request is processed.
+    pub async fn serve_socks5(mut self) -> Result<Socks5Socket<T, A>> {
         match self.request().await {
             Ok(_) => {}
             Err(SocksError::ReplyError(e)) => {
