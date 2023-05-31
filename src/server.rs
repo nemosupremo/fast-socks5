@@ -33,6 +33,8 @@ pub struct Config<A: Authentication = DenyAuthentication> {
     execute_command: bool,
     /// Enable UDP support
     allow_udp: bool,
+    /// Safe mode
+    safe_mode: bool,
     auth: Option<Arc<A>>,
 }
 
@@ -44,6 +46,7 @@ impl<A: Authentication> Default for Config<A> {
             dns_resolve: true,
             execute_command: true,
             allow_udp: false,
+            safe_mode: false,
             auth: None,
         }
     }
@@ -118,6 +121,7 @@ impl<A: Authentication> Config<A> {
             dns_resolve: self.dns_resolve,
             execute_command: self.execute_command,
             allow_udp: self.allow_udp,
+            safe_mode: self.safe_mode,
             auth: Some(Arc::new(authentication)),
         }
     }
@@ -131,6 +135,12 @@ impl<A: Authentication> Config<A> {
     /// Will the server perform dns resolve
     pub fn set_dns_resolve(&mut self, value: bool) -> &mut Self {
         self.dns_resolve = value;
+        self
+    }
+
+    /// Will the server be sage
+    pub fn set_safe_mode(&mut self, value: bool) -> &mut Self {
+        self.safe_mode = value;
         self
     }
 
@@ -249,7 +259,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin, A: Authentication> Socks5Socket<T, A> {
         self.reply_ip = Some(addr);
     }
 
-    pub async fn handshake(&mut self) -> Result<()>  {
+    pub async fn handshake(&mut self) -> Result<()> {
         // TODO (ensure we don't handshake twice?)
         trace!("upgrading to socks5...");
 
@@ -593,6 +603,28 @@ impl<T: AsyncRead + AsyncWrite + Unpin, A: Authentication> Socks5Socket<T, A> {
             .to_socket_addrs()?
             .next()
             .context("unreachable")?;
+
+        if self.config.safe_mode {
+            match addr {
+                std::net::SocketAddr::V4(addr) => {
+                    if addr.ip().is_link_local()
+                        || addr.ip().is_multicast()
+                        || addr.ip().is_private()
+                        || addr.ip().is_loopback()
+                    {
+                        return Err(ReplyError::ConnectionNotAllowed)?;
+                    }
+                }
+                std::net::SocketAddr::V6(addr) => {
+                    if addr.ip().is_loopback()
+                        || addr.ip().is_multicast()
+                        || (addr.ip().segments()[0] & 0xfe00) == 0xfc00
+                    {
+                        return Err(ReplyError::ConnectionNotAllowed)?;
+                    }
+                }
+            }
+        }
 
         // TCP connect with timeout, to avoid memory leak for connection that takes forever
         let outbound = tcp_connect_with_timeout(addr, self.config.request_timeout).await?;
